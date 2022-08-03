@@ -1,0 +1,503 @@
+---
+title: "Project: NASA - Nearest Earth Objects"
+author: "Amir Kavie"
+date: "2022-07-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+#### In this project an in depth analysis of the latest database on Nearest Earth Objects has been performed.
+#### Although the Accuracy of our Logistic Regression was 90.4%, we had a high rate of false positives which was reprented in the form of high Sensitivity of 98.9%, low Specificity 8.5%, and an almost unacceptably low ROC AUC of 11.9%.
+
+#### Through the implementation of a Random Forest, we observe that the most important variables are "miss_distance" and "relative_velocity", which are followed by "est_diameter_max", "absolute_magnitude" and "est_diameter_min".
+#### Our Random Forest has an Accuracy of 91.8%, a Sensitivity of 97.8%, and a Specificity of 34%, which means that Random Forest is a more reliable model compared to the results of our Logistic Regression model.
+#### Finally, by Boosting our Random Forest and tuning it, we find a more reliable model with an ROC AUC of 91.6%.
+
+
+
+## Data Import
+During the data import process, I dropped the 'id' and 'name' columns, since they are man-made variables and have no relevance to our analysis.
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tidymodels)
+library(dplyr)
+library(xgboost)
+library(yardstick)
+```
+
+```{r}
+nasa_df <- read.csv("neo_v2.csv")
+
+nasa_df$hazardous <- as.factor(nasa_df$hazardous)
+
+# Converting KM to Meters
+nasa_df$est_diameter_min <- nasa_df$est_diameter_min * 1000
+nasa_df$est_diameter_max <- nasa_df$est_diameter_max * 1000
+#nasa_df$orbiting_body <- as.factor(nasa_df$orbiting_body)
+#nasa_df$sentry_object <- as.factor(nasa_df$sentry_object)
+#nasa_df
+
+#nrow(nasa_df)
+#head(nasa_df)
+nasa_df$id <- NULL
+nasa_df$name <- NULL
+nasa_df$orbiting_body <- NULL
+nasa_df$sentry_object <- NULL
+str(nasa_df)
+summary(nasa_df)
+```
+
+
+## Univariate Analysis
+
+### hazardous
+
+```{r}
+ggplot(nasa_df, aes(hazardous)) +
+  geom_bar(color = "darkgreen", fill = "lightgreen", width = 0.2) +
+  theme_classic()
+
+summary(nasa_df$hazardous)
+
+```
+
+### est_diameter_min
+```{r}
+ggplot(nasa_df, aes((est_diameter_min))) +
+  geom_histogram(color = "darkgreen", fill = "lightgreen") +
+  scale_x_log10() +
+  theme_classic()
+
+summary(nasa_df$est_diameter_min)
+mean(nasa_df$est_diameter_min)
+```
+
+### est_diameter_max
+```{r}
+ggplot(nasa_df, aes(est_diameter_max)) +
+  geom_histogram(color = "darkgreen", fill = "lightgreen") +
+  scale_x_log10() +
+  theme_classic()
+
+summary(nasa_df$est_diameter_max)
+```
+
+### relative_velocity
+```{r}
+ggplot(nasa_df, aes(relative_velocity)) +
+  geom_histogram(color = "darkgreen", fill = "lightgreen") +
+  theme_classic()
+
+summary(nasa_df$relative_velocity)
+```
+
+### miss_distance
+```{r}
+ggplot(nasa_df, aes(miss_distance)) +
+  geom_histogram(color = "darkgreen", fill = "lightgreen") +
+  theme_classic()
+
+summary(nasa_df$miss_distance)
+```
+
+
+### absolute_magnitude
+```{r}
+ggplot(nasa_df, aes(absolute_magnitude)) +
+  geom_histogram(color = "darkgreen", fill = "lightgreen") +
+  theme_classic()
+
+summary(nasa_df$absolute_magnitude)
+```
+
+
+## Bivariate Analysis
+
+### Hazardous vs. est_diameter_min
+```{r}
+glm_mdl <- glm(hazardous ~ est_diameter_min, data = nasa_df, family = binomial)
+summary(glm_mdl)
+coefficients(glm_mdl)
+
+ggplot(nasa_df, aes(est_diameter_min, as.numeric(hazardous) - 1)) +
+  geom_point() +
+  geom_smooth(method="glm", color="blue", se=FALSE,
+                method.args = list(family='binomial'))
+```
+
+### Hazardous vs. est_diameter_max
+```{r}
+glm_mdl <- glm(hazardous ~ est_diameter_max, data = nasa_df, family = binomial)
+summary(glm_mdl)
+coefficients(glm_mdl)
+
+ggplot(nasa_df, aes(est_diameter_max, as.numeric(hazardous) - 1)) +
+  geom_point() +
+  geom_smooth(method="glm", color="blue", se=FALSE,
+                method.args = list(family='binomial'))
+```
+
+### Hazardous vs. relative_velocity
+```{r}
+glm_mdl <- glm(hazardous ~ relative_velocity, data = nasa_df, family = binomial)
+summary(glm_mdl)
+coefficients(glm_mdl)
+
+ggplot(nasa_df, aes(relative_velocity, as.numeric(hazardous) - 1)) +
+  geom_point() +
+  geom_smooth(method="glm", color="blue", se=FALSE,
+                method.args = list(family='binomial'))
+```
+
+### Hazardous vs. miss_distance
+```{r}
+glm_mdl <- glm(hazardous ~ miss_distance, data = nasa_df, family = binomial)
+summary(glm_mdl)
+coefficients(glm_mdl)
+
+ggplot(nasa_df, aes(miss_distance, as.numeric(hazardous) - 1)) +
+  geom_point() +
+  geom_smooth(method="glm", color="blue", se=FALSE,
+                method.args = list(family='binomial'))
+```
+
+### Hazardous vs. absolute_magnitude
+```{r}
+glm_mdl <- glm(hazardous ~ absolute_magnitude, data = nasa_df, family = binomial)
+summary(glm_mdl)
+coefficients(glm_mdl)
+
+ggplot(nasa_df, aes(absolute_magnitude, as.numeric(hazardous) - 1)) +
+  geom_point() +
+  geom_smooth(method="glm", color="blue", se=FALSE,
+                method.args = list(family='binomial'))
+```
+
+
+## Correlation Matrix
+```{r}
+# Correlation
+#cor(nasa_df$est_diameter_min, nasa_df$relative_velocity, method="pearson")
+#nasa_df$hazardous <- as.numeric(nasa_df$hazardous)
+#cor(nasa_df)
+```
+
+```{r}
+library(corrplot)
+#corrplot(nasa_df, method = "circle")
+```
+
+## Pairs Chart
+```{r}
+pairs(data = nasa_df, hazardous ~ est_diameter_min + est_diameter_max + 
+        relative_velocity + miss_distance + absolute_magnitude, col = nasa_df$hazardous)
+```
+
+## Logistic Regression
+```{r echo=FALSE}
+# This model was initially but was not used.
+#glm_mdl <- glm(hazardous ~ est_diameter_min + est_diameter_max + relative_velocity +
+ #                miss_distance + absolute_magnitude, data = nasa_df, family = binomial)
+#summary(glm_mdl)
+#coefficients(glm_mdl)
+```
+
+
+```{r}
+# Create data split object
+nasa_split <- initial_split(nasa_df, prop = 0.75, strata = hazardous)
+
+# Create the training data
+nasa_training <- nasa_split %>% 
+  training()
+
+# Create the test data
+nasa_test <- nasa_split %>% 
+  testing()
+
+# Check the number of rows
+nrow(nasa_training)
+nrow(nasa_test)
+
+
+# Specify a logistic regression model
+logistic_model <- logistic_reg() %>% 
+  # Set the engine
+  set_engine('glm') %>% 
+  # Set the mode
+  set_mode('classification')
+
+# Fit to training data
+logistic_fit <- logistic_model %>% 
+  fit(hazardous ~ est_diameter_min + est_diameter_max + relative_velocity +
+                  miss_distance + absolute_magnitude,
+      data = nasa_training)
+
+# Print model fit object
+logistic_fit
+```
+
+## Making Predictions based on Logistic Regression
+
+```{r}
+# Predict outcome categories
+class_preds <- predict(logistic_fit, new_data = nasa_test,
+                       type = 'class')
+
+# Obtain estimated probabilities for each outcome value
+prob_preds <- predict(logistic_fit, new_data = nasa_test, 
+                      type = 'prob')
+
+# Combine test set results
+nasa_results <- nasa_test %>% 
+  select(hazardous) %>% 
+  bind_cols(class_preds, prob_preds)
+
+# View results tibble
+#nasa_results
+```
+
+### Confusion Matrix
+```{r}
+# Calculate the confusion matrix
+head(nasa_results)
+
+conf_mat(nasa_results, truth = hazardous,
+         estimate = .pred_class)
+```
+
+### Accuracy
+```{r}
+# Calculate the accuracy
+accuracy(nasa_results, truth = hazardous,
+         estimate = .pred_class)
+```
+
+### Sensitivity
+```{r}
+# Calculate the sensitivity
+sens(nasa_results, truth = hazardous,
+     estimate = .pred_class)
+```
+
+### Specificity
+```{r}
+# Calculate the specificity
+spec(nasa_results, truth = hazardous,
+     estimate = .pred_class)
+```
+
+
+```{r echo=FALSE}
+# --------------------------------------------------------------------------
+# Instead of calculating Accuracy, Sensitivity, and Specificity separately,
+# we can do all three together:
+
+# Create a custom metric function
+#nasa_metrics <- metric_set(accuracy, sens, spec)
+
+# Calculate metrics using model results tibble
+#nasa_metrics(nasa_results, truth = hazardous,
+#                estimate = .pred_class)
+#--------------------------------------------------------------------------
+
+#--------------------------------------------------------------------------
+# Passing a confusion matrix to the summary() function will 
+# calculate all available binary classification metrics in tidymodels at once!
+
+# Create a confusion matrix
+#conf_mat(nasa_results,
+#         truth = hazardous,
+#         estimate = .pred_class) %>% 
+  # Pass to the summary() function
+#  summary()
+#--------------------------------------------------------------------------
+```
+
+
+```{r}
+# Create a Heat Map of confusion matrix
+conf_mat(nasa_results,
+         truth = hazardous,
+         estimate = .pred_class) %>%
+  # Create a heat map
+  autoplot(type = 'heatmap')
+
+# Create a Mosaic Plor of confusion matrix
+conf_mat(nasa_results,
+         truth = hazardous,
+         estimate = .pred_class) %>% 
+  # Create a mosaic plot
+  autoplot(type = "mosaic")
+```
+
+
+```{r}
+# ROC & AUC
+
+# Calculate metrics across thresholds
+threshold_df <- nasa_results %>% 
+  roc_curve(truth = hazardous, .pred_True)
+
+# View results
+threshold_df
+
+# Plot ROC curve
+threshold_df %>% 
+  autoplot()
+
+# Calculate ROC AUC
+roc_auc(nasa_results,
+        truth = hazardous, 
+        .pred_True)
+```
+
+
+## Random Forest
+
+```{r}
+spec <- rand_forest(mtry = 4,
+            trees = 100,
+            min_n = 10) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+```
+
+### Training the Forest
+
+```{r}
+spec2 <- spec %>%
+  fit(hazardous ~ est_diameter_min + est_diameter_max + relative_velocity + miss_distance + absolute_magnitude, data = nasa_training)
+#library("ranger")
+#model_rf <- ranger(hazardous ~ ., data = nasa_training, probability = TRUE)
+##data = nasa_training[complete.cases(nasa_training),]
+#model_rf
+```
+
+### Variable Importance
+
+We observe that the most important variables are "miss_distance" and "relative_velocity", which are followed by "est_diameter_max", "absolute_magnitude" and "est_diameter_min".
+
+```{r}
+rand_forest(mode = "classification") %>%
+  set_engine("ranger", importance = "impurity") %>%
+  fit(hazardous ~ ., data = nasa_training) %>%
+  vip::vip()
+```
+
+#### Predictions based on Random Forest Model
+
+```{r}
+forest_predictions <- predict(spec2, new_data = nasa_test)
+forest_predictions
+
+#Combining predictions and truth value
+pred_combined <- forest_predictions %>% 
+  mutate(true_class = nasa_test$hazardous)
+
+head(pred_combined)
+
+#Confusion matrix
+conf_mat(data = pred_combined, estimate = .pred_class, truth = true_class)
+```
+
+#### Accuracy of Random Forest
+```{r}
+# Calculate the accuracy
+accuracy(pred_combined, truth = true_class,
+         estimate = .pred_class)
+```
+
+#### Sensitivity of Random Forest
+```{r}
+# Calculate the sensitivity
+sens(pred_combined, truth = true_class,
+     estimate = .pred_class)
+```
+
+#### Specificity of Random Forest
+```{r}
+# Calculate the specificity
+spec(pred_combined, truth = true_class,
+     estimate = .pred_class)
+```
+
+
+## Boosting the Random Forest
+
+```{r}
+library("xgboost")
+
+boost_spec <- boost_tree() %>%
+  set_mode("classification") %>%
+  set_engine("xgboost")
+boost_spec
+
+boost_model <- fit(boost_spec, formula = hazardous ~ est_diameter_min + est_diameter_max + relative_velocity + miss_distance + absolute_magnitude, data = nasa_training)
+boost_model
+```
+
+```{r}
+set.seed(99)
+
+folds <- vfold_cv(nasa_training, v = 3)
+
+cv_results <- fit_resamples(boost_spec,
+                            hazardous ~ est_diameter_min + est_diameter_max + relative_velocity + miss_distance + absolute_magnitude,
+                            resamples = folds,
+                            metrics = metric_set(yardstick::roc_auc, accuracy, sens, specificity))
+collect_metrics(cv_results)
+```
+
+```{r}
+set.seed(100)
+
+predictions <- boost_tree() %>%
+  set_mode("classification") %>%
+  set_engine("xgboost") %>% 
+  fit(hazardous ~ ., data = nasa_training) %>%
+  predict(new_data = nasa_training, type = "prob") %>% 
+  bind_cols(nasa_training)
+
+predictions
+# Calculate AUC
+roc_auc(predictions, 
+        truth = hazardous, 
+        estimate = .pred_True)
+```
+
+```{r}
+boost_spec <- boost_tree(
+                trees = 100,
+                learn_rate = tune(),
+                tree_depth = tune(),
+                sample_size = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("xgboost")
+
+# Create the tuning grid
+tunegrid_boost <- grid_regular(parameters(boost_spec), 
+                      levels = 3)
+
+tunegrid_boost
+```
+
+
+```{r}
+# Create CV folds of training data
+folds <- vfold_cv(nasa_training, v = 3)
+
+# Tune along the grid
+tune_results <- tune_grid(boost_spec,
+                   hazardous ~ est_diameter_min + est_diameter_max + relative_velocity + miss_distance + absolute_magnitude,
+                   resamples = folds,
+                   grid = tunegrid_boost,
+                   metrics = metric_set(yardstick::roc_auc))
+
+# Plot the results
+autoplot(tune_results)
+```
